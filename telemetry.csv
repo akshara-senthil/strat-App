@@ -1,0 +1,158 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import animation
+from IPython.display import HTML
+
+g = 9.8  
+mass_cart= 1.0  
+mass_pole = 0.1  
+hlength = 0.5  # half-length of the pole, in m (total length is 1.0m)
+force_mag = 10.0  
+
+
+totmass=mass_cart+mass_pole
+pole_massxlength=mass_pole*hlength
+
+
+class CartPole:
+    def __init__(self):
+        self.state = np.zeros(4) '''in order: cart position, cart velocity, pole angle, pole angular velocity '''
+        self.timestep = 0.02 #simulation time step is 20ms
+      
+    def step(self, action):
+        # Action 0: left, Action 1: right
+        force = force_mag if action == 1 else -force_mag
+
+        x, x_dot, theta, theta_dot = self.state
+
+        cos_theta = np.cos(theta)
+        sin_theta = np.sin(theta)
+
+        temp = (force + pole_massxlength * theta_dot**2 * sin_theta) / totmass
+
+        # Equations of motion for the cart-pole system
+        theta_acc = (g * sin_theta - cos_theta * temp) / \
+                    (hlength * (4.0/3.0 - mass_pole * cos_theta**2 / totmass))
+
+        x_acc = temp - pole_massxlength * theta_acc * cos_theta / totmass
+
+        # Update state using Euler integration
+        x = x + self.timestep * x_dot
+        x_dot = x_dot + self.timestep * x_acc
+        theta = theta + self.timestep * theta_dot
+        theta_dot = theta_dot + self.timestep * theta_acc
+
+        self.state = np.array([x, x_dot, theta, theta_dot])
+
+        return self.state
+
+    def reset(self):
+        # Reset the state to a random small perturbation around upright
+        self.state = np.random.uniform(low=-0.05, high=0.05, size=(4,))
+        return self.state
+
+class PIDController:
+    def __init__(self, Kp, Ki, Kd, setpoint=0.0, output_limits=None, integral_limits=None):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.setpoint = setpoint
+
+        self.prev_error = 0.0
+        self.integral = 0.0
+
+        # Output limits to prevent integral windup or too large control signals
+        self.output_limits = output_limits
+        self.integral_limits = integral_limits
+
+    def update(self, current_value, dt):
+        error = self.setpoint - current_value
+
+        P_term = self.Kp * error
+
+        self.integral += error * dt
+        if self.integral_limits is not None:
+            self.integral = np.clip(self.integral, self.integral_limits[0], self.integral_limits[1])
+        I_term = self.Ki * self.integral
+
+        derivative = (error - self.prev_error) / dt
+        D_term = self.Kd * derivative
+
+        output = P_term + I_term + D_term
+
+        if self.output_limits is not None:
+            output = np.clip(output, self.output_limits[0], self.output_limits[1])
+
+        self.prev_error = error
+
+        return output
+
+print("PID Controller class defined.")
+
+env = CartPole()
+
+pid_controller = PIDController(
+    Kp=100.0,  
+    Ki=0.1,    
+    Kd=10.0,   
+    setpoint=0.0,
+    output_limits=(-force_mag, force_mag), 
+    integral_limits=(-10.0, 10.0) 
+
+initial_state = env.reset()
+
+history = [initial_state]
+num_steps = 100
+
+for _ in range(num_steps):
+	current_theta = env.state[2]
+	control_output = pid_controller.update(current_theta, env.timestep)
+	if control_output > 0:
+        action = 1  
+        else:
+        action = 0  
+	next_state = env.step(action)
+    	history.append(next_state)
+history = np.array(history)
+
+def cart_pole_animation(history):
+    fig = plt.figure(figsize=(8, 4))
+    ax = fig.add_subplot(111, autoscale_on=False, xlim=(-2.4, 2.4), ylim=(-1.0, 1.5))
+    ax.set_aspect('equal')
+    ax.grid()
+
+    line, = ax.plot([], [], 'o-', lw=2)  
+    cart_rect = plt.Rectangle([0, 0], 0.4, 0.2, fc='blue')  # For the cart
+    ax.add_patch(cart_rect)
+
+    time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+
+    def init():
+        line.set_data([], [])
+        cart_rect.set_xy([-0.2, 0]) 
+        time_text.set_text('')
+        return line, cart_rect, time_text
+
+    def animate(i):
+        x = history[i, 0] 
+        theta = history[i, 2]  
+
+        # Cart position
+        cart_x = x - 0.2 
+        cart_y = 0.0
+        cart_rect.set_xy([cart_x, cart_y])
+
+        # Pole position
+        pole_x = [x, x + LENGTH * 2 * np.sin(theta)]
+        pole_y = [0.1, 0.1 + LENGTH * 2 * np.cos(theta)] 
+        line.set_data(pole_x, pole_y)
+
+        time_text.set_text(f'Time: {i * env.timestep:.2f}s')
+        return line, cart_rect, time_text
+
+    ani = animation.FuncAnimation(fig, animate, frames=len(history),
+                                  interval=env.timestep * 1000, blit=True, init_func=init)
+
+    plt.close(fig) 
+    return HTML(ani.to_jshtml())
+	
